@@ -2594,19 +2594,6 @@ impl Connection {
                 return false;
             }
 
-            #[cfg(target_os = "windows")]
-            if self.terminal
-                && lr.os_login.username.trim().is_empty()
-                && crate::platform::is_prelogin()
-            {
-                self.send_login_error(
-                    "No active console user logged on, please connect and logon first.",
-                )
-                .await;
-                sleep(1.).await;
-                return false;
-            }
-
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
             if !should_use_terminal_os_login_scope(self.terminal, &lr.os_login.username) {
                 self.try_start_cm_ipc();
@@ -3692,8 +3679,10 @@ impl Connection {
         }
 
         if crate::platform::is_prelogin() {
-            self.terminal_user_token = None;
-            return Some("No active console user logged on, please connect and logon first.");
+            // Before an interactive user logs on, or in Windows PE, the service
+            // token is the only usable session token.
+            self.terminal_user_token = Some(TerminalUserToken::SelfUser);
+            return None;
         }
 
         if crate::platform::is_installed() {
@@ -5826,6 +5815,7 @@ async fn start_ipc(
 ) -> ResultType<()> {
     use hbb_common::anyhow::anyhow;
 
+    #[cfg(not(target_os = "windows"))]
     loop {
         if !crate::platform::is_prelogin() {
             break;
@@ -5918,7 +5908,23 @@ async fn start_ipc(
                     #[cfg(not(any(target_os = "linux")))]
                     {
                         log::debug!("Start cm");
-                        res = crate::platform::run_as_user(args.clone());
+                        #[cfg(target_os = "windows")]
+                        {
+                            if crate::platform::is_prelogin() {
+                                let exe = std::env::current_exe()?;
+                                res = crate::platform::run_exe_direct(
+                                    exe.to_string_lossy().as_ref(),
+                                    args.clone(),
+                                    false,
+                                );
+                            } else {
+                                res = crate::platform::run_as_user(args.clone());
+                            }
+                        }
+                        #[cfg(not(target_os = "windows"))]
+                        {
+                            res = crate::platform::run_as_user(args.clone());
+                        }
                     }
                     #[cfg(target_os = "linux")]
                     {

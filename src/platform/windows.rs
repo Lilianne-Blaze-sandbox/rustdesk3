@@ -1263,14 +1263,23 @@ pub fn portable_service_logon_helper_paths() -> Option<(PathBuf, PathBuf)> {
 }
 
 pub fn is_prelogin() -> bool {
-    //let Some(username) = get_current_session_username() else {
-        //return false;
-    //};
+    if is_windows_pe() {
+        return true;
+    }
+    let session_id = unsafe { get_current_session(share_rdp()) };
+    if session_id == u32::MAX {
+        return true;
+    }
+    let username = get_session_username_original(session_id);
+    username.is_empty() || username == "SYSTEM"
+}
 
-    // assume there's always a ready session
-    return false;
-
-    //username.is_empty() || username == "SYSTEM"
+/// Windows PE has no normal interactive user session or Explorer shell.
+#[inline]
+pub fn is_windows_pe() -> bool {
+    RegKey::predef(HKEY_LOCAL_MACHINE)
+        .open_subkey("SYSTEM\\CurrentControlSet\\Control\\MiniNT")
+        .is_ok()
 }
 
 pub fn is_locked() -> bool {
